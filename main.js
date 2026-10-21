@@ -55,6 +55,7 @@ var NoDuplicatePlugin = class extends import_obsidian.Plugin {
         openFile: (next) => {
           const app = this.app;
           return function(file, openState) {
+            if (isInPopover(this)) return next.call(this, file, openState);
             const existingLeaf = findLeafByPath(app, file.path, this);
             if (!existingLeaf) return next.call(this, file, openState);
             focusLeaf(app, existingLeaf, true);

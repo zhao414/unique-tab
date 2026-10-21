@@ -66,6 +66,11 @@ export default class NoDuplicatePlugin extends Plugin {
                 openFile: (next: AnyFunction) => {
                     const app = this.app;
                     return function (this: WorkspaceLeaf, file: TFile, openState?: OpenViewState): Promise<void> {
+                        // 悬浮预览（原生 page preview / Hover Editor）里的 leaf 只是一个“预览副本”。
+                        // 绝不能把它改向主工作区的真实标签：否则 Ctrl+hover 一个已打开的 PDF 时，
+                        // 会把那个标签抢到前台并跳页 —— 而用户根本没有点击链接。
+                        if (isInPopover(this)) return next.call(this, file, openState) as Promise<void>;
+
                         const existingLeaf = findLeafByPath(app, file.path, this);
 
                         // 没有其他已打开的同文件标签：正常打开
