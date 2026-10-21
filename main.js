@@ -56,19 +56,13 @@ var NoDuplicatePlugin = class extends import_obsidian.Plugin {
           const app = this.app;
           return function(file, openState) {
             if (isInPopover(this)) return next.call(this, file, openState);
+            const leafView = this.view;
+            if (leafView && leafView.getViewType() === "empty") {
+              return next.call(this, file, openState);
+            }
             const existingLeaf = findLeafByPath(app, file.path, this);
             if (!existingLeaf) return next.call(this, file, openState);
             focusLeaf(app, existingLeaf, true);
-            const isNewEmptyLeaf = this.view && !this.view.file && this.view.getViewType() === "empty";
-            if (isNewEmptyLeaf) {
-              const containerEl = this.containerEl;
-              if (containerEl) {
-                containerEl.addClass("unique-tab-hidden");
-              }
-              window.setTimeout(() => {
-                this.detach();
-              }, 0);
-            }
             if (hasEditorStatePayload(openState)) {
               return next.call(existingLeaf, file, openState);
             }

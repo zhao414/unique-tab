@@ -71,6 +71,14 @@ export default class NoDuplicatePlugin extends Plugin {
                         // 会把那个标签抢到前台并跳页 —— 而用户根本没有点击链接。
                         if (isInPopover(this)) return next.call(this, file, openState) as Promise<void>;
 
+                        // 全新的空 leaf 说明调用方明确要求“新标签”（Ctrl/Cmd+点击、拖到分屏、
+                        // 命令“在新标签页中打开”等）。此时若把打开改向已有标签，
+                        // Ctrl+点击 就会被静默降级成“聚焦已有标签”，必须放行。
+                        const leafView = this.view;
+                        if (leafView && leafView.getViewType() === "empty") {
+                            return next.call(this, file, openState) as Promise<void>;
+                        }
+
                         const existingLeaf = findLeafByPath(app, file.path, this);
 
                         // 没有其他已打开的同文件标签：正常打开
@@ -79,21 +87,9 @@ export default class NoDuplicatePlugin extends Plugin {
                         // 聚焦已有标签（延迟解决焦点抢占）
                         focusLeaf(app, existingLeaf, true);
 
-                        // 若当前 leaf 是刚被创建出来的空 leaf，立刻隐身并销毁，避免视觉抖动
-                        // @ts-ignore: file / containerEl 属于未完全暴露的 API
-                        const isNewEmptyLeaf = this.view && !this.view.file && this.view.getViewType() === "empty";
-                        if (isNewEmptyLeaf) {
-                            // @ts-ignore: containerEl 属于未完全暴露的 DOM API
-                            const containerEl = this.containerEl as HTMLElement;
-                            if (containerEl) {
-                                containerEl.addClass('unique-tab-hidden');
-                            }
-
-                            // 立即销毁
-                            window.setTimeout(() => {
-                                this.detach();
-                            }, 0);
-                        }
+                        // 说明：原先这里还有一段「隐身 + 立即 detach 新空 leaf」的逻辑。
+                        // 现在空 leaf 在上面已作为“显式新标签”被放行，不会再走到这里，
+                        // 因此该分支已删除；重复标签在源头就被阻止，不会产生需要隐藏的空白页。
 
                         // 关键修复：把 openState 里的定位信息（eState.subpath / page / line 等）
                         // 应用到已有标签，而不是丢弃它 —— 否则 PDF++ 的深链接只会聚焦、不会跳转。
