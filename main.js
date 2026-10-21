@@ -23,6 +23,7 @@ __export(main_exports, {
 });
 module.exports = __toCommonJS(main_exports);
 var import_obsidian = require("obsidian");
+var POPOVER_SELECTOR = ".popover, .hover-popover, .hover-editor";
 var NoDuplicatePlugin = class extends import_obsidian.Plugin {
   async onload() {
     console.log("No Duplicate Leaves (Optimized for ALL file types) loaded");
@@ -36,10 +37,15 @@ var NoDuplicatePlugin = class extends import_obsidian.Plugin {
               (0, import_obsidian.getLinkpath)(linktext),
               sourcePath
             );
-            if (targetFile) {
-              if (activateLeafByPath(app, targetFile.path, linktext)) return;
+            const existingLeaf = targetFile ? findLeafByPath(app, targetFile.path) : null;
+            if (!existingLeaf) {
+              return next.call(this, linktext, sourcePath, newLeaf, openViewState);
             }
-            return next.call(this, linktext, sourcePath, newLeaf, openViewState);
+            focusLeaf(app, existingLeaf);
+            if (hasDeepLinkPayload(linktext, openViewState)) {
+              return next.call(this, linktext, sourcePath, false, openViewState);
+            }
+            return Promise.resolve();
           };
         }
       })
@@ -49,21 +55,23 @@ var NoDuplicatePlugin = class extends import_obsidian.Plugin {
         openFile: (next) => {
           const app = this.app;
           return function(file, openState) {
-            const leafFound = activateLeafByPath(app, file.path, null, this, true);
-            if (leafFound) {
-              const isNewEmptyLeaf = this.view && !this.view.file && this.view.getViewType() === "empty";
-              if (isNewEmptyLeaf) {
-                const containerEl = this.containerEl;
-                if (containerEl) {
-                  containerEl.addClass("unique-tab-hidden");
-                }
-                window.setTimeout(() => {
-                  this.detach();
-                }, 0);
+            const existingLeaf = findLeafByPath(app, file.path, this);
+            if (!existingLeaf) return next.call(this, file, openState);
+            focusLeaf(app, existingLeaf, true);
+            const isNewEmptyLeaf = this.view && !this.view.file && this.view.getViewType() === "empty";
+            if (isNewEmptyLeaf) {
+              const containerEl = this.containerEl;
+              if (containerEl) {
+                containerEl.addClass("unique-tab-hidden");
               }
-              return Promise.resolve();
+              window.setTimeout(() => {
+                this.detach();
+              }, 0);
             }
-            return next.call(this, file, openState);
+            if (hasEditorStatePayload(openState)) {
+              return next.call(existingLeaf, file, openState);
+            }
+            return Promise.resolve();
           };
         }
       })
@@ -73,66 +81,53 @@ var NoDuplicatePlugin = class extends import_obsidian.Plugin {
     console.log("No Duplicate Leaves unloaded");
   }
 };
-function activateLeafByPath(app, path, linktext = null, ignoreLeaf = null, delay = false) {
+function findLeafByPath(app, path, ignoreLeaf = null) {
   let foundLeaf = null;
   app.workspace.iterateAllLeaves((leaf) => {
     if (foundLeaf) return;
     if (ignoreLeaf && leaf === ignoreLeaf) return;
+    if (isInPopover(leaf)) return;
     const viewState = leaf.getViewState();
-    const leafFile = viewState.state?.file;
+    const leafFile = viewState?.state?.file;
     const isMatch = typeof leafFile === "string" && leafFile.length > 0 && leafFile === path;
     if (isMatch) foundLeaf = leaf;
   });
-  if (foundLeaf) {
-    const leaf = foundLeaf;
-    if (delay) {
-      window.setTimeout(() => {
-        app.workspace.setActiveLeaf(leaf, { focus: true });
-      }, 10);
-    } else {
-      app.workspace.setActiveLeaf(leaf, { focus: true });
-    }
-    if (linktext) {
-      const viewState = leaf.getViewState();
-      if (viewState.type === "markdown") {
-        window.setTimeout(() => scrollToElement(app, linktext, leaf), 20);
-      }
-    }
-    return true;
-  }
-  return false;
+  return foundLeaf;
 }
-function scrollToElement(app, linktext, leaf) {
-  const hashMatch = linktext.match(/(#|\^)(.*)$/);
-  if (!hashMatch) return;
-  const view = leaf.view;
-  if (!view || !view.editor) return;
-  if (!view.file) return;
-  const cache = app.metadataCache.getFileCache(view.file);
-  if (!cache) return;
-  const type = hashMatch[1];
-  const name = hashMatch[2];
-  let line = -1;
-  if (type === "#") {
-    const heading = cache.headings?.find((h) => h.heading === name);
-    if (heading) line = heading.position.start.line;
-  } else if (type === "^") {
-    const block = cache.blocks?.[name];
-    if (block) line = block.position.start.line;
+function isInPopover(leaf) {
+  const containerEl = leaf.containerEl;
+  if (!containerEl || typeof containerEl.closest !== "function") return false;
+  return containerEl.closest(POPOVER_SELECTOR) !== null;
+}
+function focusLeaf(app, leaf, delay = false) {
+  if (delay) {
+    window.setTimeout(() => {
+      app.workspace.setActiveLeaf(leaf, { focus: true });
+    }, 10);
+  } else {
+    app.workspace.setActiveLeaf(leaf, { focus: true });
   }
-  if (line >= 0) {
-    view.editor.setCursor({ line, ch: 0 });
-    view.editor.scrollIntoView({ from: { line, ch: 0 }, to: { line, ch: 0 } }, true);
-  }
+}
+function hasDeepLinkPayload(linktext, openViewState) {
+  return !!(0, import_obsidian.parseLinktext)(linktext).subpath || hasEditorStatePayload(openViewState);
+}
+function hasEditorStatePayload(openState) {
+  if (!openState) return false;
+  const { eState, state } = openState;
+  return hasKeys(eState) || hasKeys(state);
+}
+function hasKeys(obj) {
+  return !!obj && Object.keys(obj).length > 0;
 }
 function around(obj, factories) {
+  const target = obj;
   const removers = Object.keys(factories).map((key) => {
-    const prev = obj[key];
+    const prev = target[key];
     const next = factories[key](prev);
     const original = prev;
-    obj[key] = next;
+    target[key] = next;
     return () => {
-      if (obj[key] === next) obj[key] = original;
+      if (target[key] === next) target[key] = original;
     };
   });
   return () => removers.forEach((r) => r());
